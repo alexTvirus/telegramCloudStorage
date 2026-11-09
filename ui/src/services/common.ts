@@ -13,26 +13,20 @@ interface RequestData {
 let cachedBaseURL: string;
 
 const getBaseURLPromise = async () => {
-  if (cachedBaseURL) {
-    return cachedBaseURL;
-  }
+  if (cachedBaseURL) return cachedBaseURL;
   const deployments = ["", "http://localhost:3000"];
 
-  return new Promise(async (resolve, reject) => {
-    for (let URL of deployments) {
-      try {
-        await fetch(`${URL}/api/v1/healthy`);
-        cachedBaseURL = URL;
-        console.log("Server Found: ", URL);
-        resolve(URL);
-        break;
-      } catch (e) {
-        console.log(`${URL} not available!`, e);
-      }
+  for (const URL of deployments) {
+    try {
+      await fetch(`${URL}/api/v1/healthy`);
+      cachedBaseURL = URL;
+      console.log("Server Found: ", URL);
+      return URL;
+    } catch (error) {
+      console.log(`${URL} not available!`, error);
     }
-
-    reject("No deployments found!");
-  });
+  }
+  throw new Error("No deployments found!");
 };
 
 export const getBaseURL = () => cachedBaseURL;
@@ -44,9 +38,9 @@ export const makeRequest = async (
   onUploadProgress?: any,
   onDownloadProgress?: any
 ) => {
+  await getBaseURLPromise();
   try {
-    await getBaseURLPromise();
-    const response = await axios({
+    return await axios({
       headers: {
         Authorization: `bearer ${localStorage.getItem("accessToken")}`,
       },
@@ -58,27 +52,19 @@ export const makeRequest = async (
       onUploadProgress,
       onDownloadProgress,
     });
-    return response;
-  } catch (e: any) {
-    if (e.response.status === 401) {
-      history.push("/login");
-    }
-    return {} as any;
+  } catch (error: any) {
+    if (error?.response?.status === 401) history.push("/login");
+    throw error;
   }
 };
 
 export const showErrorMessage = (title: string, description: string) => {
-  notification.error({
-    message: title,
-    description,
-  });
+  notification.error({ message: title, description });
 };
 
 export const history = createBrowserHistory();
 
-export const isLoggedIn = () => {
-  return !!localStorage.getItem("accessToken");
-};
+export const isLoggedIn = () => !!localStorage.getItem("accessToken");
 
 export const shortenFileName = (
   fileName: string,
@@ -93,7 +79,7 @@ export const shortenFileName = (
     const [extension] = fileParts.slice(-1);
     const fileNameWithoutExt = fileParts.slice(0, -1).join(".");
     return `${fileNameWithoutExt.substring(0, length)}.${extension}`;
-  } catch (e) {
+  } catch (_error) {
     return file;
   }
 };

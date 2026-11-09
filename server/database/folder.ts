@@ -36,7 +36,7 @@ export interface FolderDTO {
 }
 
 const removeTrailingSlash = (path: string) => {
-  return path.slice(-1)[0] === "/" ? path.slice(0, -1) : path; // remove trailing '/'
+  return path.slice(-1)[0] === "/" ? path.slice(0, -1) : path;
 };
 
 export const FolderModel = mongoose.model(`FolderModel`, FolderSchema);
@@ -48,7 +48,6 @@ export const makeFolderModel = async (
   parentFolder: mongoose.Types.ObjectId
 ) => {
   path = removeTrailingSlash(path);
-  // Creating a folder model
   const folder = new FolderModel({
     folderName,
     path: `${path}/${folderName}`,
@@ -59,8 +58,6 @@ export const makeFolderModel = async (
     owner,
     parentFolder,
   });
-
-  // Saving the folder to DB
   await folder.save();
   return folder;
 };
@@ -74,8 +71,7 @@ export const listFolder = async (
   const FolderModel = mongoose.model(`FolderModel`, FolderSchema);
   const folder = await FolderModel.findOne({ path, owner }).populate("folders");
   if (!folder) throw new Error("Folder not found!");
-  const result: FolderDTO = folder.toJSON();
-  return result;
+  return folder.toJSON() as FolderDTO;
 };
 
 export const makeFolder = async (
@@ -86,34 +82,28 @@ export const makeFolder = async (
   if (!owner || !path || !folderName)
     throw new Error("Owner, path and folderName are required!");
   const FolderModel = mongoose.model(`FolderModel`, FolderSchema);
-  console.log("creating folder path:", path);
   path = removeTrailingSlash(path);
   const folder = await FolderModel.findOne({ path, owner });
   if (!folder) throw new Error("Folder not found!");
-  if (folder.folders.find((folder) => folder.folderName === folderName)) {
+  if (folder.folders.find((child) => child.folderName === folderName)) {
     throw new Error(`Folder '${folderName}' already exists on path '${path}'`);
   }
   const subFolder = await makeFolderModel(owner, path, folderName, folder._id);
-  console.log("Making subFolder", folderName);
   folder.folders.push(subFolder as any);
   folder.lastModified = new Date();
   await folder.save();
-  console.log("Folder added");
-  const result: FolderDTO = folder.toJSON();
-  return result;
+  return folder.toJSON() as FolderDTO;
 };
 
 const getAllDocsToBeDeleted = async (
   parentId: mongoose.Types.ObjectId,
   accumulator: mongoose.Types.ObjectId[]
 ) => {
-  const parent = await FolderModel.findOne({ _id: parentId }).populate(
-    "folders"
-  );
+  const parent = await FolderModel.findOne({ _id: parentId }).populate("folders");
   if (!parent) return;
   const children = parent.folders;
   accumulator.push(...children.map((child) => child._id));
-  for (let child of children) {
+  for (const child of children) {
     await getAllDocsToBeDeleted(child._id, accumulator);
   }
   return accumulator;
@@ -126,27 +116,25 @@ export const removeFolder = async (
   if (!owner || !path) throw new Error("Owner and path are required!");
   path = removeTrailingSlash(path);
   if (path === "/root") throw new Error("Root folder cannot be deleted!");
-  const FolderModel = mongoose.model(`FolderModel`, FolderSchema);
 
-  // Fetching the folder using path
   const folder = await FolderModel.findOne({ path, owner }).populate("folders");
   if (!folder) throw new Error("Folder not found!");
 
-  // Delete reference on its parent
   if (folder.parentFolder) {
-    const parent = await FolderModel.findOne({
-      _id: folder.parentFolder,
-    }).populate("folders");
-    const childIndex = parent.folders.findIndex((child) => {
-      return child._id.toString() === folder._id.toString();
-    });
-    parent.folders.splice(childIndex, 1);
-    await parent.save();
+    const parent = await FolderModel.findOne({ _id: folder.parentFolder }).populate("folders");
+    if (parent) {
+      const childIndex = parent.folders.findIndex(
+        (child) => child._id.toString() === folder._id.toString()
+      );
+      if (childIndex >= 0) {
+        parent.folders.splice(childIndex, 1);
+        await parent.save();
+      }
+    }
   }
-  const listOfDocs = [folder._id];
-  const ids = await getAllDocsToBeDeleted(folder._id, listOfDocs);
-  const status = await FolderModel.deleteMany({ _id: { $in: ids } });
-  return status;
+
+  const ids = await getAllDocsToBeDeleted(folder._id, [folder._id]);
+  return FolderModel.deleteMany({ _id: { $in: ids } });
 };
 
 export const addFile = async (
@@ -156,24 +144,15 @@ export const addFile = async (
   fileContent: any
 ) => {
   if (!owner || !path || !fileName || !fileContent)
-    throw new Error("Owner, path and folderName are required!");
+    throw new Error("Owner, path and fileContent are required!");
 
-  const FolderModel = mongoose.model(`FolderModel`, FolderSchema);
   path = removeTrailingSlash(path);
   const folder = await FolderModel.findOne({ path, owner });
   if (!folder) throw new Error("Folder not found!");
 
-  const FileModel = mongoose.model(`FileModel`, FileSchema);
-  const file = new FileModel({
-    fileName,
-    content: fileContent,
-  });
-
-  folder.files.push(file);
-
-  const doc = await folder.save();
-  console.log("File added!");
-  return doc;
+  folder.files.push({ fileName, content: fileContent } as any);
+  folder.lastModified = new Date();
+  return folder.save();
 };
 
 export const removeFile = async (
@@ -184,15 +163,16 @@ export const removeFile = async (
   if (!owner || !path || !fileId)
     throw new Error("Owner, path and fileId are required!");
 
-  const FolderModel = mongoose.model(`FolderModel`, FolderSchema);
   path = removeTrailingSlash(path);
   const folder = await FolderModel.findOne({ path, owner });
   if (!folder) throw new Error("Folder not found!");
+
   const deleteFileIndex = folder.files.findIndex(
-    (file) => file._id.toString() === fileId.toString()
+    (storedFile) => storedFile._id.toString() === fileId.toString()
   );
+  if (deleteFileIndex < 0) throw new Error("File not found in this folder");
+
   folder.files.splice(deleteFileIndex, 1);
-  const doc = await folder.save();
-  console.log("File removed: ", fileId);
-  return doc;
+  folder.lastModified = new Date();
+  return folder.save();
 };
